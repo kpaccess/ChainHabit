@@ -18,6 +18,7 @@ struct AddEditHabitView: View {
     @State private var habitNotes = ""
     @State private var selectedColor: Color = .habitColors[0]
     @State private var selectedFrequency: Habit.Frequency = .daily
+    @State private var selectedStartDate = Calendar.current.startOfDay(for: Date())
     @State private var hasEndDate = false
     @State private var selectedEndDate = Calendar.current.startOfDay(for: Date())
 
@@ -67,6 +68,7 @@ struct AddEditHabitView: View {
             _habitNotes = State(initialValue: habit.notes)
             _selectedColor = State(initialValue: habit.color)
             _selectedFrequency = State(initialValue: habit.frequency)
+            _selectedStartDate = State(initialValue: Calendar.current.startOfDay(for: habit.creationDate))
             _hasEndDate = State(initialValue: habit.endDate != nil)
             _selectedEndDate = State(initialValue: Calendar.current.startOfDay(for: habit.endDate ?? Date()))
             
@@ -98,19 +100,28 @@ struct AddEditHabitView: View {
     private var nextAppearanceText: String {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
+        let startDate = calendar.startOfDay(for: selectedStartDate)
         let weekdaySymbols = calendar.weekdaySymbols
         
         for i in 0...7 {
             guard let targetDate = calendar.date(byAdding: .day, value: i, to: today) else { continue }
+            if targetDate < startDate { continue }
             let weekday = calendar.component(.weekday, from: targetDate)
             
             let isScheduled: Bool
             switch frequencyType {
-            case .daily: isScheduled = true
-            case .weekly: isScheduled = (i == 0)
-            case .customDays: isScheduled = selectedDays.contains(weekday)
-            case .everyXDays: isScheduled = (i == 0)
-            case .monthly: isScheduled = (i == 0)
+            case .daily:
+                isScheduled = true
+            case .weekly:
+                let daysSinceStart = calendar.dateComponents([.day], from: startDate, to: targetDate).day ?? 0
+                isScheduled = daysSinceStart >= 0 && daysSinceStart % 7 == 0
+            case .customDays:
+                isScheduled = selectedDays.contains(weekday)
+            case .everyXDays:
+                let daysSinceStart = calendar.dateComponents([.day], from: startDate, to: targetDate).day ?? 0
+                isScheduled = daysSinceStart >= 0 && daysSinceStart % everyXDaysInterval == 0
+            case .monthly:
+                isScheduled = calendar.component(.day, from: startDate) == calendar.component(.day, from: targetDate)
             }
             
             if isScheduled {
@@ -212,20 +223,26 @@ struct AddEditHabitView: View {
                 }
 
                 Section {
+                    DatePicker(
+                        "Start Date",
+                        selection: $selectedStartDate,
+                        displayedComponents: .date
+                    )
+
                     Toggle("Set End Date", isOn: $hasEndDate.animation())
 
                     if hasEndDate {
                         DatePicker(
                             "End Date",
                             selection: $selectedEndDate,
-                            in: Calendar.current.startOfDay(for: habitToEdit?.creationDate ?? Date())...,
+                            in: Calendar.current.startOfDay(for: selectedStartDate)...,
                             displayedComponents: .date
                         )
                     }
                 } header: {
                     Text("Duration")
                 } footer: {
-                    Text("If set, the habit will stop appearing after this date.")
+                    Text("New habits start today by default, but you can choose any start date. If set, the habit will stop appearing after the end date.")
                 }
 
                 Section {
@@ -245,6 +262,16 @@ struct AddEditHabitView: View {
             }
             .navigationTitle(habitToEdit == nil ? "New Habit" : "Edit Habit")
             .navigationBarTitleDisplayMode(.inline)
+            .onChange(of: selectedStartDate) { _, newValue in
+                let normalizedStartDate = Calendar.current.startOfDay(for: newValue)
+                if selectedStartDate != normalizedStartDate {
+                    selectedStartDate = normalizedStartDate
+                }
+
+                if hasEndDate && selectedEndDate < normalizedStartDate {
+                    selectedEndDate = normalizedStartDate
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -287,6 +314,7 @@ struct AddEditHabitView: View {
     }
     
     private func saveHabit() {
+        let startDate = Calendar.current.startOfDay(for: selectedStartDate)
         let trimmedName = habitName.trimmingCharacters(in: .whitespaces)
         let trimmedNotes = habitNotes.trimmingCharacters(in: .whitespacesAndNewlines)
         let endDate = hasEndDate ? Calendar.current.startOfDay(for: selectedEndDate) : nil
@@ -310,6 +338,7 @@ struct AddEditHabitView: View {
             habit.name = trimmedName
             habit.notes = trimmedNotes
             habit.colorHex = selectedColor.toHex() ?? "3498DB"
+            habit.creationDate = startDate
             habit.frequency = frequency
             habit.endDate = endDate
             habit.morningReminderEnabled = morningReminderEnabled
@@ -322,6 +351,7 @@ struct AddEditHabitView: View {
             let newHabit = Habit(
                 name: trimmedName,
                 colorHex: selectedColor.toHex() ?? "3498DB",
+                creationDate: startDate,
                 notes: trimmedNotes,
                 frequency: frequency,
                 endDate: endDate,
